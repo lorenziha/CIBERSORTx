@@ -1,0 +1,436 @@
+---
+title: "R Notebook"
+output:
+  html_notebook: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+Loading data
+
+```{r Load data}
+library("readxl")
+setwd("~/OneDrive/PROJECTS/CIBERSORTx/CIBERSORTx_RESULTS/ANALYSIS")
+
+# CiberSortx Abs Abundance decombolution results
+results.raw.csx <- as.data.frame(read_excel("../../CIBERSORTx_RESULTS/CIBERSORTx_Job7_Results.xlsx", col_names  = T))
+
+results.csx <- results.raw.csx[,2:(ncol(results.raw.csx)-4)] # discard last 4 columns with stat info
+rownames(results.csx) <- results.raw.csx[,1]
+
+# Load patient metadata
+patG <- readRDS("for_Hernan/data/patientGroup.rds")
+#hist(as.numeric(results.csx[17,]))
+names(patG)
+```
+
+```{r explore cell content acroos samples}
+
+# Function to format df for plotting
+format_df_for_plotting <- function(df){
+  
+  mydf <- as.data.frame(cbind(c(), c(), c()))
+  
+  for ( i in colnames(df))  {
+    for (j in rownames(df)){
+      mydf <- as.data.frame(rbind(mydf, c(i, round(df[j,i], digits = 1),j)))
+    }
+  }  
+  colnames(mydf) <- c("Cell_Type", "Abundance", "Sample_id")
+  return(mydf)
+}
+
+# Generate stacked bar plot
+library(colortools)
+library(ggplot2)
+my_colors <- wheel("darkblue", num = ncol(results.csx))
+
+mydf <- format_df_for_plotting(results.csx)
+mydf$Abundance <- as.numeric(mydf$Abundance)
+
+ggplot(mydf, aes(x = interaction(Sample_id), y = Abundance)) +
+  geom_bar(
+    aes(color = Cell_Type, fill = Cell_Type),
+    stat = "identity", position = position_stack()) +
+  scale_color_manual(values = my_colors)+
+  scale_fill_manual(values = my_colors) +
+  theme(axis.text.x = element_text(size = 4, angle = 90), legend.position = "top")
+```
+
+
+```{r link samples to groups}
+patG["VL.neg_thc"]
+
+hth=patG[["healthy_control"]]
+pos=patG[["VL.pos_control"]]
+neg=patG[["VL.neg_control"]]
+negt=patG[["VL.neg_thc"]]
+negtp=patG[["VL.neg_thc_tp"]]
+
+patG[names(patG)[2]]
+
+# Copy CiberSortx result to type
+type <- results.csx
+results.csx <- t(results.csx) # transpose table to match Yunhua format
+
+simp=gsub("X","",colnames(results.csx))
+h=c(1:ncol(results.csx))[simp%in%hth]
+a=c(1:ncol(results.csx))[simp%in%pos]
+b=c(1:ncol(results.csx))[simp%in%neg]
+c=c(1:ncol(results.csx))[simp%in%negt]
+d=c(1:ncol(results.csx))[simp%in%negtp]
+
+cbind(rowMeans(results.csx[,h]),rowMeans(results.csx[,a]),rowMeans(results.csx[,b]),rowMeans(results.csx[,c]),rowMeans(results.csx[,d]))
+
+
+```
+
+
+```{r define functions for plottting}
+# create a dataset
+create_dataset <- function(cellType){
+  x <- as.numeric(results.csx[cellType,])
+  
+  data <- data.frame(
+      name = c( rep("Healthy",length(h)),rep("POS",length(a)), rep("NEG",length(b)), rep("NEG.THC",length(c)),
+              rep("NEG.THC.TP",length(d))),
+      value = c(x[h],x[a],x[b],x[c],x[d])
+      )
+  data$name <- as.factor(data$name)
+  return(data)
+}
+
+plotEstCellType <- function(cellType){
+  data <- create_dataset(cellType)
+
+# Libraries
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+
+# Plot
+options(repr.plot.width=6, repr.plot.height=6) 
+data %>%
+  ggplot(aes(x=name, y=value, fill=name)) +
+    geom_violin()  +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=1.6, alpha=0.9,width=0.1) +
+    theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    #ggtitle(paste0("estimated cell type: all CD4+")) +
+    ggtitle(paste0("estimated cell type: ",cellType)) +
+    xlab("")
+
+}
+
+# Boxplot
+plotEstCellType_boxplot <- function(cellType){
+  data <- create_dataset(cellType)
+  
+  # Libraries
+  library(ggpubr)
+  
+  # Stats comparisons
+  my_comparisons <- list(c("Healthy", "NEG"), c("Healthy", "NEG.THC"), c("Healthy", "NEG.THC.TP"), c("Healthy", "POS"))
+  options(repr.plot.width=6, repr.plot.height=6) 
+
+  ggboxplot(data, x = "name", y = "value",
+             title = cellType, ylab = "Cell Relative Abundance",
+             color = "black",fill = "name") + scale_fill_viridis(discrete = TRUE, alpha=0.6, ) + 
+    scale_colour_viridis_d() +
+    stat_compare_means(method = "kruskal.test")
+    
+} # stat_compare_means(comparisons = my_comparisons)
+
+# Violin Plot
+plotEstCellType_violin <- function(cellType){
+  data <- create_dataset(cellType)
+  
+  # Libraries
+  library(ggpubr)
+  
+  # Plot
+  options(repr.plot.width=6, repr.plot.height=6) 
+  
+  ggviolin(data, x = "name", y = "value",
+             title = cellType, ylab = "Cell Relative Abundance",
+             color = "name", palette = "jco")
+}
+
+
+```
+
+
+```{r generate violine plots per cell type}
+#cbind(rowMeans(results.csx[,h]),rowMeans(results.csx[,a]),rowMeans(results.csx[,b]),rowMeans(results.csx[,c]),rowMeans(results.csx[,d]))
+
+my_cell_types <- rownames(results.csx)[1:17]
+
+for (cell_type in my_cell_types){
+  print(plotEstCellType(cell_type))
+}
+
+```
+
+# BoxPlots
+
+```{r generate boxplots per cell type}
+for (cell_type in my_cell_types){
+  print(plotEstCellType_boxplot(cell_type))
+}
+
+```
+
+# Print boxplots
+```{r save boxplots in single file}
+
+all_celltypes.df <- data.frame()
+for (cell_type in rownames(results.csx)){
+  celltype.df <- create_dataset(cell_type)
+  all_celltypes.df <- as.data.frame(rbind( all_celltypes.df, cbind(celltype.df, cell_type = rep(cell_type,length(celltype.df$value)))) )
+}
+
+options(repr.plot.width=6, repr.plot.height=40)
+
+p <- ggboxplot(all_celltypes.df, x = "name", y = "value", 
+             title = cell_type, ylab = "Cell Relative Abundance",
+             color = "black", fill = "name") +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6, ) +
+  scale_colour_viridis_d() +
+  stat_compare_means(method = "kruskal.test") +
+  facet_wrap(c("cell_type"), ncol = 2, scales = "free")
+
+# Save plots to file
+ggsave("boxplot_by_cell_type.pdf", p, width = 10, height = 30, units = c("in"))
+```
+
+
+
+```{r define plot function for factors}
+#require(gdata)
+meta = readRDS("../../DATA/meta.rds")
+
+plotMeasuredFactor <- function(Fact){
+z=log2(as.numeric(meta[,colnames(meta)%in%Fact])+0.1)
+
+data <- data.frame(
+    name=c(rep("Healthy",length(h)),  rep("POS",length(a)), rep("NEG",length(b)), rep("NEG.THC",length(c)), rep("NEG.THC.TP",length(d))),
+    value=c(z[h],z[a],z[b],z[c],z[d])
+    )
+
+data$name <- factor(data$name, levels = c("Healthy","POS","NEG","NEG.THC","NEG.THC.TP"))
+# Plot
+#options(repr.plot.width=24, repr.plot.height=24) 
+
+options(repr.plot.width=6, repr.plot.height=6)
+
+#data %>%
+#  ggplot( aes(x=name, y=value, fill=name)) +
+#    geom_violin()  +
+#    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+#    geom_jitter(color="black", size=1.6, alpha=0.9,width = 0.2) +
+#    theme_ipsum() +
+#    theme(
+#      legend.position="none",
+#      plot.title = element_text(size=11)
+#    ) +
+#    ggtitle(paste0(Fact)) +
+#    xlab("")
+#}
+ 
+ggboxplot(data, x = "name", y = "value",
+             title = paste0(Fact), ylab = "Cell Relative Abundance",
+             color = "black",fill = "name") + scale_fill_viridis(discrete = TRUE, alpha=0.6, ) + 
+    scale_colour_viridis_d() +
+    stat_compare_means(method = "kruskal.test")
+}
+plotMeasuredFactor(colnames(meta)[14])
+
+```
+```{r print out factors}
+x=colnames(meta)
+c(1:length(x))[x%in%'LPS']
+c(1:length(x))[x%in%'CD4.count']
+length(x)
+#meta[,c(14,21:68)]
+colnames(meta)
+```
+```{r plot by measured factor 1}
+p1=plotMeasuredFactor(colnames(meta)[21])
+p2=plotMeasuredFactor(colnames(meta)[23])
+p3=plotMeasuredFactor(colnames(meta)[25])
+p4=plotMeasuredFactor(colnames(meta)[27])
+p5=plotMeasuredFactor(colnames(meta)[29])
+p6=plotMeasuredFactor(colnames(meta)[31])
+p7=plotMeasuredFactor(colnames(meta)[33])
+p8=plotMeasuredFactor(colnames(meta)[35])
+p9=plotMeasuredFactor(colnames(meta)[37])
+p10=plotMeasuredFactor(colnames(meta)[39])
+p11=plotMeasuredFactor(colnames(meta)[41])
+p12=plotMeasuredFactor(colnames(meta)[43])
+cowplot::plot_grid(p1, p2, p3, p4, p5,p6, p7,p8,p9,p10,p11,p12, ncol=1,scale = 2)
+
+p1
+p2
+p3
+p4
+p5
+p6
+p7
+p8
+p9
+p10
+p11
+p12
+```
+
+```{r plot by measured factor 2}
+p1=plotMeasuredFactor(colnames(meta)[45])
+p2=plotMeasuredFactor(colnames(meta)[47])
+p3=plotMeasuredFactor(colnames(meta)[49])
+p4=plotMeasuredFactor(colnames(meta)[51])
+p5=plotMeasuredFactor(colnames(meta)[53])
+p6=plotMeasuredFactor(colnames(meta)[55])
+p7=plotMeasuredFactor(colnames(meta)[57])
+p8=plotMeasuredFactor(colnames(meta)[59])
+p9=plotMeasuredFactor(colnames(meta)[61])
+p10=plotMeasuredFactor(colnames(meta)[63])
+p11=plotMeasuredFactor(colnames(meta)[65])
+p12=plotMeasuredFactor(colnames(meta)[67])
+
+p1
+p2
+p3
+p4
+p5
+p6
+p7
+p8
+p9
+p10
+p11
+p12
+```
+
+```{r PCA plots}
+# Subset results.csx to the 5 gorups plotted above
+keep <- colnames(results.csx) %in% c(hth, pos, neg, negt, negtp)
+type.abdab.csx <- results.csx[, keep]
+
+# Generate vector with group names
+my_names <- colnames(type.abdab.csx)
+my_names[which(my_names %in% hth)] <- "Healthy"
+my_names[which(my_names %in% pos)] <- "POS"
+my_names[which(my_names %in% neg)] <- "NEG"
+my_names[which(my_names %in% negt)] <- "NEG.THC"
+my_names[which(my_names %in% negtp)] <- "NEG.THC.TP"
+
+# Remove all-zero rows
+type.abdab.csx <- type.abdab.csx[rowSums(type.abdab.csx) > 0,]
+
+# Transpose table
+type.abdab.csx.t <- t(type.abdab.csx)
+
+# Calculate PCA
+type.abdab.csx.pca <- prcomp(type.abdab.csx.t, center = TRUE,scale. = TRUE)
+summary(type.abdab.csx.pca)
+```
+
+```{r plot pca}
+library(ggbiplot)
+ggbiplot(type.abdab.csx.pca, groups = my_names, ellipse = T) + 
+  scale_fill_viridis(discrete = TRUE, alpha=0.6, ) + 
+  scale_colour_viridis_d()
+ggbiplot(type.abdab.csx.pca, groups = my_names, ellipse = T, var.axes = F) +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6, ) + 
+  scale_colour_viridis_d()
+```
+```{r import Yunhuas results}
+library(heatmap3)
+
+yunhua.raw.abis <- read.csv("for_Hernan/data/CellTypeDeconvolution.txt", header = T, row.names = 1, sep = "\t")
+x <- gsub("X","",colnames(yunhua.raw.abis))
+colnames(yunhua.raw.abis) <- x
+
+# generate metadata table
+my_meta = data.frame()
+for (i in names(patG)){
+  id = patG[[i]] 
+  g = rep(i, length(id))
+  y=as.data.frame(cbind(id,g))
+  my_meta = as.data.frame(rbind(my_meta,y))
+}
+
+# Format cibersortx results
+x <- gsub(" ","_",rownames(results.csx))
+results.frm.csx <- as.data.frame(results.csx)
+rownames(results.frm.csx) <- x
+
+# Run correlation analysis
+my_correlation <- cor(yunhua.raw.abis, results.frm.csx)
+
+# Get associated metadata
+my_row_names <- rownames(my_correlation)
+my_col_names <- colnames(my_correlation)
+my_row_groups <- c()
+for (i in my_row_names){
+  my_row_groups <- c(my_row_groups, my_meta$g[my_meta$id == i])
+}
+my_col_groups <- c()
+for (i in my_col_names){
+  my_col_groups <- c(my_col_groups, my_meta$g[my_meta$id == i])
+}
+
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+my_colors <- wheel("darkblue", num = length(unique(my_col_groups)))
+
+# assign colors to groups
+my_colors.df <- as.data.frame(cbind(group = unique(my_col_groups), color = my_colors))
+my_row_groups.col <- c()
+for (i in my_col_groups){
+  my_row_groups.col <- c(my_row_groups.col, my_meta$g[my_meta$id == i])
+}
+
+# Plot Heatmap
+heatmap(x = my_correlation, col = col, symm = TRUE)
+
+correl_vector <- c()
+for (i in 1:ncol(my_correlation)){
+    correl_vector<- c(correl_vector, my_correlation[i,i])
+}
+
+# Calculate R2
+correl_vector_r2 <- correl_vector * correl_vector
+
+# Plot correlations
+ggboxplot(correl_vector_r2, add = "jitter", ylab = "R2", xlab = "Corralation ABIS vs CIBERSORTx")
+
+```
+
+```{r}
+
+my_groups <- c()
+z=0
+mydf2 =  mydf
+for (i in mydf2$Sample_id){
+  z = z + 1
+  if(err)
+  mydf2[z,"group"] <- my_meta$g[my_meta$id == i]
+ 
+}
+
+ggplot(mydf, aes(x = interaction(Sample_id), y = Abundance)) +
+  geom_bar(
+    aes(color = Cell_Type, fill = Cell_Type),
+    stat = "identity", position = position_stack()) +
+  scale_color_manual(values = my_colors)+
+  scale_fill_manual(values = my_colors) +
+  theme(axis.text.x = element_text(size = 4, angle = 90), legend.position = "top")
+
+```
+
+
