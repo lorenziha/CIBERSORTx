@@ -1,0 +1,464 @@
+---
+title: "Generation of bulk RNAseq mock samples for testing CIBERSORTx performance"
+autor: "Hernan Lorenzi - BCBB"
+output: html_notebook
+---
+
+
+The first part of the code below was adapted from the Seurat vignette
+
+```{r Load libraries}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+
+# Dataset downloaded from here:
+# https://cf.10xgenomics.com/samples/cell/pbmc3k/pbmc3k_filtered_gene_bc_matrices.tar.gz
+
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir = "./filtered_gene_bc_matrices 2/hg19/")
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+```
+
+
+
+```{r QC}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+```
+
+
+```{r Filtering based on QC values}
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+
+```{r Normalize data}
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r Scaling the data}
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+
+```
+
+```{r Perform linear dimensional reduction}
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+
+```
+
+```{r Determine the ‘dimensionality’ of the dataset}
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+pbmc <- JackStraw(pbmc, num.replicate = 100)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:20)
+```
+
+
+```{r Cluster the cells}
+
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+
+```
+
+```{r Run non-linear dimensional reduction (UMAP/tSNE)}
+# If you haven't installed UMAP, you can do so via reticulate::py_install(packages =
+# 'umap-learn')
+pbmc <- RunUMAP(pbmc, dims = 1:10)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(pbmc, reduction = "umap", label = TRUE)
+
+```
+
+```{r save object}
+saveRDS(pbmc, file = "pbmc_tutorial.rds")
+```
+
+```{r Finding differentially expressed features (cluster biomarkers)}
+# find all markers of cluster 2
+cluster2.markers <- FindMarkers(pbmc, ident.1 = 2, min.pct = 0.25)
+```
+
+```{r}
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(pbmc, ident.1 = 5, ident.2 = c(0, 3), min.pct = 0.25)
+```
+```{r}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+pbmc.markers %>% group_by(cluster) %>% top_n(n = 2, wt = avg_log2FC)
+```
+
+
+```{r Assigning cell type identity to clusters}
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono", 
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+
+
+```
+```{r}
+saveRDS(pbmc, file = "pbmc3k_final.rds")
+
+cell_assignment <- as.data.frame(pbmc@active.ident)
+mypbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+```
+
+
+```{r}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+mypbmc[["percent.mt"]] <- PercentageFeatureSet(mypbmc, pattern = "^MT-")
+```
+
+# Mock unrelated samples
+```{r creating mock pbms samples}
+library(biomaRt)
+
+listMarts(host="uswest.ensembl.org")
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+
+mypbmc <- subset(mypbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+# To get read counts matrix for cells x genes:
+# mypbmc@assays$RNA@counts
+
+mypbmc.counts <- as.data.frame(mypbmc@assays$RNA@counts)
+
+# cel type names in cell_assignment
+counts.subset.df <- mypbmc.counts[,rownames(cell_assignment)]
+
+# Normalize counts to PTMs
+  # Fetch exon length from BioMart
+  my_mart <- getBM(attributes=c("external_gene_name","exon_chrom_start","exon_chrom_end"), 
+        mart = ensembl, 
+        filters = c("external_gene_name"), 
+        values = rownames(counts.subset.df)
+        )
+  my_mart$exon_length <- (abs(my_mart$exon_chrom_start - my_mart$exon_chrom_end) + 1) / 1000 # length in Kb
+  
+  # Calculate transcript length
+  transcript_lengths <- aggregate(my_mart$exon_length, by=list(Category=my_mart$external_gene_name), FUN=sum)
+  
+  # Eliminate gene IDs from counts.subset.df without transcript length info in transcript_lengths
+  transcript_lengths <- transcript_lengths[transcript_lengths$Category %in% rownames(counts.subset.df),]
+  counts.subset.df <- counts.subset.df[transcript_lengths$Category,]
+  
+  print(dim(transcript_lengths))
+  print(dim(counts.subset.df))
+  
+  # Sort transcripts_length df by rownames of counts.subset.df
+  transcript_lengths <- transcript_lengths[match(rownames(counts.subset.df), transcript_lengths$Category), ]
+  
+  # Function to normalize by TPMs based on transcript length
+  normalize_by_TPM <- function(counts,len) {
+    # See reference for formula
+    # https://btep.ccr.cancer.gov/question/faq/what-is-the-difference-between-rpkm-fpkm-and-tpm/
+    x.df <- apply(counts, MARGIN = 2, FUN = function(x) x/len)
+    x.df <- apply(x.df, MARGIN = 2, FUN = function(x) x * 1e6 / sum(x)) 
+    return(x.df)
+  }
+  
+  counts.subset.df.tpm <- normalize_by_TPM(counts = counts.subset.df, len = transcript_lengths$x)
+  
+  
+  
+# set of probability pool
+prob_pool <- c(0.001,0.005, 0.007, 0.006, 0.01, 0.011,0.006, 0.005, 0.009)
+prob_vector <- sample(prob_pool,size=9,replace=FALSE)
+cell_types <- as.vector(unique(cell_assignment$`pbmc@active.ident`))
+names(prob_vector) <- cell_types
+
+# make prob vector for entire dataset
+prob_long <- as.vector(cell_assignment$`pbmc@active.ident`)
+prob_long <- prob_vector[prob_long]
+
+  
+# Generate mock samples
+number_of_mock_samples = 20
+number_of_cells_per_sample = 5000
+sample.ids <- sample(ncol(counts.subset.df.tpm),size=number_of_cells_per_sample,replace=TRUE, prob = prob_long)
+my_sample = c() 
+my_sample_by_cell = c()
+my_sample_by_cell <- data.frame(numeric(nrow(counts.subset.df.tpm)), stringsAsFactors = FALSE)
+colnames(my_sample_by_cell) <- "setup"
+my_composition <- as.data.frame(table(cell_assignment$`pbmc@active.ident`[sample.ids]), row.names = 1)
+colnames(my_composition) <- "setup"
+
+# Iterate through mock samples
+for (i in 1:number_of_mock_samples){
+  # Generate probability vector
+  prob_vector <- sample(prob_pool,size=9,replace=FALSE)
+  names(prob_vector) <- cell_types
+  prob_long <- as.vector(cell_assignment$`pbmc@active.ident`)
+  prob_long <- prob_vector[prob_long]
+  my_sample_id <- paste0("mock.",i)
+  
+  # Do subsampling and check that no cell type has 0 cells. Total cell types should be = 9
+  flag = 8;
+  while(flag < 9){ 
+    sample.ids <- sample(ncol(counts.subset.df.tpm),size=5000,replace=TRUE, prob = prob_long)
+    sample.cell_types <- cell_assignment$`pbmc@active.ident`[sample.ids]
+    flag = length(unique(sample.cell_types))
+    print(paste("Total cell types > 0 cells = ",flag))
+  }
+  sample.gene_counts <- as.data.frame(counts.subset.df.tpm[,sample.ids])
+  
+  # Iterate through all cell types to generate counts per cell type per sample
+  for (type in cell_types){
+    if(type == "Platelet"){
+      next
+    }
+    my_cell_id <- paste0(my_sample_id,".",type)
+    type.idx <- which(sample.cell_types == type)
+    # Check if cell type has only one cell
+    if(length(type.idx) > 1 ){
+      type.gene_count <- as.data.frame(rowSums(sample.gene_counts[,type.idx]))
+    } else {
+      type.gene_count <- as.data.frame(sample.gene_counts[,type.idx])
+    }
+    colnames(type.gene_count) <- my_sample_id
+    type.gene_count_by_cell <- type.gene_count
+    colnames(type.gene_count_by_cell) <- my_cell_id
+    
+    if(! is.data.frame(my_sample)){
+      # my_sample data.frame does not exist
+      my_sample <- as.data.frame(type.gene_count)
+      my_sample_by_cell <- as.data.frame(type.gene_count_by_cell)
+      
+    } else if(is.vector(my_sample[[my_sample_id]])){
+      # my_sample data.frame exists
+      my_sample[[my_sample_id]] <- rowSums(cbind(my_sample[[my_sample_id]], type.gene_count))
+      my_sample_by_cell <- cbind(my_sample_by_cell, type.gene_count_by_cell)
+    } else {
+      # my_sample column does not exist
+      my_sample <- cbind(my_sample, type.gene_count)
+      
+      my_sample_by_cell <- cbind(my_sample_by_cell, type.gene_count_by_cell)
+    }
+    #my_sample_by_cell <- as.data.frame(cbind(my_sample_by_cell, type.gene_count_by_cell))
+  }
+  
+  
+  #tmp2.df <- as.data.frame(rowSums(counts.subset.df.tpm[,sample.ids]))
+  #my_sample_by_cell <- as.data.frame(cbind(my_sample_by_cell,tmp2.df ))
+  #colnames(my_sample_by_cell)[ncol(my_sample_by_cell)] <- paste0("mock.",i)
+  
+  tmp.df <- as.data.frame(table(cell_assignment$`pbmc@active.ident`[sample.ids]), row.names = 1)
+  my_composition <- as.data.frame(cbind(my_composition,tmp.df ))
+  colnames(my_composition)[ncol(my_composition)] <- paste0("mock.",i)
+}
+
+# Drop setup column from my_composition
+my_composition <- my_composition[,-c(1)]
+print(my_composition)
+print(my_sample)
+print(my_sample_by_cell)
+
+# Table with gene expression profiles per sample for several unrelated mock samples
+write.table(my_sample, "mock_expression_table_2.txt", sep = "\t")
+# Table with gene expression profiles per sample and per cell type for several unrelated mock samples
+write.table(my_sample_by_cell, "mock_expression_table_by_cell_2.txt", sep = "\t")
+# Table with cell composition profiles per sample for several unrelated mock samples
+write.table(my_composition, "mock_composition_table_2.txt", sep = "\t")
+
+```
+
+
+
+# Mock samples from two hypothetical groups.
+Each group uses the same prob_vector, so the cell composition of samples within each group
+is similar. This samples can be used to chech the performance of CIBERSORTx with GEP mode
+```{r creating mock pbms samples from two hypothetical groups}
+
+library(biomaRt)
+
+listMarts(host="uswest.ensembl.org")
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", GRCh=37)
+
+mypbmc <- subset(mypbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+# To get read counts matrix for cells x genes:
+# mypbmc@assays$RNA@counts
+
+mypbmc.counts <- as.data.frame(mypbmc@assays$RNA@counts)
+
+# cel type names in cell_assignment
+counts.subset.df <- mypbmc.counts[,rownames(cell_assignment)]
+
+# Normalize counts to PTMs
+  # Fetch exon length from BioMart
+  my_mart <- getBM(attributes=c("external_gene_name","exon_chrom_start","exon_chrom_end"), 
+        mart = ensembl, 
+        filters = c("external_gene_name"), 
+        values = rownames(counts.subset.df)
+        )
+  my_mart$exon_length <- (abs(my_mart$exon_chrom_start - my_mart$exon_chrom_end) + 1) / 1000 # length in Kb
+  
+  # Calculate transcript length
+  transcript_lengths <- aggregate(my_mart$exon_length, by=list(Category=my_mart$external_gene_name), FUN=sum)
+  
+  # Eliminate gene IDs from counts.subset.df without transcript length info in transcript_lengths
+  transcript_lengths <- transcript_lengths[transcript_lengths$Category %in% rownames(counts.subset.df),]
+  counts.subset.df <- counts.subset.df[transcript_lengths$Category,]
+  
+  print(dim(transcript_lengths))
+  print(dim(counts.subset.df))
+  
+  # Sort transcripts_length df by rownames of counts.subset.df
+  transcript_lengths <- transcript_lengths[match(rownames(counts.subset.df), transcript_lengths$Category), ]
+  
+  # Function to normalize by TPMs based on transcript length
+  normalize_by_TPM <- function(counts,len) {
+    # See reference for formula
+    # https://btep.ccr.cancer.gov/question/faq/what-is-the-difference-between-rpkm-fpkm-and-tpm/
+    x.df <- apply(counts, MARGIN = 2, FUN = function(x) x/len)
+    x.df <- apply(x.df, MARGIN = 2, FUN = function(x) x * 1e6 / sum(x)) 
+    return(x.df)
+  }
+  
+  counts.subset.df.tpm <- normalize_by_TPM(counts = counts.subset.df, len = transcript_lengths$x)
+  
+  
+  
+# set of probability pool
+prob_pool <- c(0.001,0.005, 0.007, 0.006, 0.01, 0.011,0.006, 0.005, 0.009)
+prob_vector <- sample(prob_pool,size=9,replace=FALSE)
+cell_types <- as.vector(unique(cell_assignment$`pbmc@active.ident`))
+names(prob_vector) <- cell_types
+
+# make prob vector for entire dataset
+prob_long <- as.vector(cell_assignment$`pbmc@active.ident`)
+prob_long <- prob_vector[prob_long]
+
+  
+# Generate mock samples
+number_of_mock_samples = 40
+number_of_cells_per_sample = 5000
+sample.ids <- sample(ncol(counts.subset.df.tpm),size=number_of_cells_per_sample,replace=TRUE, prob = prob_long)
+my_sample = c() 
+my_sample_by_cell = c()
+my_sample_by_cell <- data.frame(numeric(nrow(counts.subset.df.tpm)), stringsAsFactors = FALSE)
+colnames(my_sample_by_cell) <- "setup"
+my_composition <- as.data.frame(table(cell_assignment$`pbmc@active.ident`[sample.ids]), row.names = 1)
+colnames(my_composition) <- "setup"
+
+# Iterate through mock groups (only 2 so far)
+groups = c('A','B')
+# Mock samples from same group should have same probability vectors, simulating same experimental condition
+
+
+for (my_group in groups){
+  # Iterate through mock samples
+  # Generate probability vector
+  prob_vector <- sample(prob_pool,size=9,replace=FALSE)
+  names(prob_vector) <- cell_types
+  prob_long <- as.vector(cell_assignment$`pbmc@active.ident`)
+  prob_long <- prob_vector[prob_long]
+  
+    
+  for (i in 1:number_of_mock_samples){
+    my_sample_id <- paste0("group.",my_group,".sample.",i)
+    
+    # Do subsampling and check that no cell type has 0 cells. Total cell types should be = 9
+    flag = 8;
+    while(flag < 9){ 
+      sample.ids <- sample(ncol(counts.subset.df.tpm),size=5000,replace=TRUE, prob = prob_long)
+      sample.cell_types <- cell_assignment$`pbmc@active.ident`[sample.ids]
+      flag = length(unique(sample.cell_types))
+      print(paste("Group=",my_group,", Total cell types > 0 cells = ",flag))
+    }
+    sample.gene_counts <- as.data.frame(counts.subset.df.tpm[,sample.ids])
+    
+    # Iterate through all cell types to generate counts per cell type per sample
+    for (type in cell_types){
+      if(type == "Platelet"){
+        next
+      }
+      my_cell_id <- paste0(my_sample_id,".",type)
+      type.idx <- which(sample.cell_types == type)
+      # Check if cell type has only one cell
+      if(length(type.idx) > 1 ){
+        type.gene_count <- as.data.frame(rowSums(sample.gene_counts[,type.idx]))
+      } else {
+        type.gene_count <- as.data.frame(sample.gene_counts[,type.idx])
+      }
+      colnames(type.gene_count) <- my_sample_id
+      type.gene_count_by_cell <- type.gene_count
+      colnames(type.gene_count_by_cell) <- my_cell_id
+      
+      if(! is.data.frame(my_sample)){
+        # my_sample data.frame does not exist
+        my_sample <- as.data.frame(type.gene_count)
+        my_sample_by_cell <- as.data.frame(type.gene_count_by_cell)
+        
+      } else if(is.vector(my_sample[[my_sample_id]])){
+        # my_sample data.frame exists
+        my_sample[[my_sample_id]] <- rowSums(cbind(my_sample[[my_sample_id]], type.gene_count))
+        my_sample_by_cell <- cbind(my_sample_by_cell, type.gene_count_by_cell)
+      } else {
+        # my_sample column does not exist
+        my_sample <- cbind(my_sample, type.gene_count)
+        
+        my_sample_by_cell <- cbind(my_sample_by_cell, type.gene_count_by_cell)
+      }
+      #my_sample_by_cell <- as.data.frame(cbind(my_sample_by_cell, type.gene_count_by_cell))
+    }
+  
+    tmp.df <- as.data.frame(table(cell_assignment$`pbmc@active.ident`[sample.ids]), row.names = 1)
+    my_composition <- as.data.frame(cbind(my_composition,tmp.df ))
+    colnames(my_composition)[ncol(my_composition)] <- paste0("group.",my_group,".sample.",i)
+  }
+}
+my_composition <- my_composition[,-c(1)]
+print(my_composition)
+print(my_sample)
+print(my_sample_by_cell)
+
+# Table with gene expression profiles per sample from two simulated groups, A and B
+write.table(my_sample, "mock_expression_table_GEP.txt", sep = "\t")
+# Table with gene expression profiles per sample and per cell type from two simulated groups, A and B
+write.table(my_sample_by_cell, "mock_expression_table_by_cell_GEP.txt", sep = "\t")
+# Table with cell composition profiles per sample from two simulated groups, A and B
+write.table(my_composition, "mock_composition_table_GEP.txt", sep = "\t")
+
+```
+
+# Generate a file with transcriptomic profiles from indiVidual cells suitable for building a signature matrix
+```{r prepare df for signature matrix}
+my_read_counts <- counts.subset.df
+
+# Transform read counts into RPKMs
+# Function to normalize by RPkM based on transcript length
+normalize_by_RPKM <- function(counts,len) {
+  # See reference for formula
+  # https://btep.ccr.cancer.gov/question/faq/what-is-the-difference-between-rpkm-fpkm-and-tpm/
+  
+  scaling_factor <- colSums(counts)/1e6
+  rpm.df <- t(apply(counts, MARGIN = 1, FUN = function(x) x/scaling_factor))
+  rpkm.df <- apply(rpm.df, MARGIN = 2, FUN = function(x) x / len) 
+  return(rpkm.df)
+}
+
+counts.subset.df.rpkm <- normalize_by_RPKM(counts = my_read_counts, len = transcript_lengths$x)
+
+colnames(counts.subset.df.rpkm) <- cell_assignment$`pbmc@active.ident`
+
+# Table that can be used as input for generating a signature matrix in TPMs
+write.table(counts.subset.df.rpkm, file = "sourat_signature_martix_RPKM.txt", sep = "\t")
+```
+
+
+
+
+
