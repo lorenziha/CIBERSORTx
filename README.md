@@ -34,3 +34,6 @@ File desciptions:
     f) mock_composition_table_GEP.txt (Table with cell composition profiles in TPMs per sample from two simulated groups, A and B)
     
     g) sourat_signature_martix_RPKM.txt (Table that can be used as input for generating a signature matrix in TPMs)
+
+7) PresentationCIBERSORTx.pptx
+  Presentation of CIBERSORTx cell deconvolution analysis and comparison with ABIS results from YunHua.
