@@ -6,16 +6,19 @@ File desciptions:
 1) ABIS_signature_matrix.txt
   Signature matrix files (in TPMs) that was used by Yunhua for cellular decombolution with ABIS (by Yunhua) and CIBERSORTx (by Hernan).
 
-2) CIBERSORTx_Job7_Results.xlsx
+2) CIBERSORTx_sourat_signature_martix_TPM.txt
+  Signature matrix files (in TPMs) used for mock sample analysis
+
+3) CIBERSORTx_Job7_Results.xlsx
   Excel spreadsheet with cell deconvolution results using CIBERSORTx and ABIS signature matrix.
   
-2) CIBERSORTx.Rmd
+4) CIBERSORTx.Rmd
   R script for performing comparative analysis between Yunhua's ABIS cell deconvolution and Hernan's CIBERSORTx cell deconvolution, together with statistical analysis of CIBERSORTx cell deconvolution across the five experimental groups. 
 
-3) R Notebook CIBERSORTx.pdf
+5) R Notebook CIBERSORTx.pdf
   R notebook report from CIBERSORTx.Rmd
   
-4) Mock_samples_from_scRNAseq.Rmd
+6) Mock_samples_from_scRNAseq.Rmd
   R script for generating mock samples from scRNAseq data and input file for signature matrix. It generates the following files:
   
     a) mock_expression_table_2.txt (Table with gene expression profiles in TPMs per sample for several unrelated mock samples)
