@@ -1,7 +1,7 @@
 # CIBERSORTx
 Collaboration with Chang's Lab
 
-Files desciption:
+File desciptions:
 
 1) CIBERSORTx.Rmd
   R script for performing comparative analysis between Yunhua's ABIS cell deconvolution and Hernan's CIBERSORTx cell deconvolution, together with statistical analysis of CIBERSORTx cell deconvolution across the five experimental groups. 
