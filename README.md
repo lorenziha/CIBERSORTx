@@ -5,6 +5,9 @@ File desciptions:
 
 1) ABIS_signature_matrix.txt
   Signature matrix files (in TPMs) that was used by Yunhua for cellular decombolution with ABIS (by Yunhua) and CIBERSORTx (by Hernan).
+
+2) CIBERSORTx_Job7_Results.xlsx
+  Excel spreadsheet with cell deconvolution results using CIBERSORTx and ABIS signature matrix.
   
 2) CIBERSORTx.Rmd
   R script for performing comparative analysis between Yunhua's ABIS cell deconvolution and Hernan's CIBERSORTx cell deconvolution, together with statistical analysis of CIBERSORTx cell deconvolution across the five experimental groups. 
